@@ -2740,9 +2740,9 @@ def buyerReviewListing(id):
                 jsonuser.append({'Note':'Your application has been submitted!'})
 
 
-                sender_email = "zgravity207@gmail.com"
-                receiver_email = "arselan.alvi@sjsu.edu"
-                password = 'cmpe2072020'
+                sender_email = ""
+                receiver_email = ""
+                password = ''
 
                 message = MIMEMultipart("alternative")
                 message["Subject"] = "APPLICATION FOR YOUR SALE LISTING"
