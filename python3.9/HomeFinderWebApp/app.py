@@ -10,7 +10,9 @@ import json,os,io
 from base64 import encodebytes
 from PIL import Image
 import base64
-import requests
+import smtplib, ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 UPLOAD_FOLDER = os.getcwd()+'/uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
@@ -31,16 +33,70 @@ conn = pymysql.connect(
         db='homefinder', 
         )  
 
-# HOME
-@app.route('/',methods=['POST'])
-def home():
-    if 'id' in session:
-        idd = session['id']
-        return jsonify({'message' : 'You are already logged in', 'username' : idd})
-    else:
-        resp = jsonify({'message' : 'Unauthorized'})
-        resp.status_code = 401
-        return resp
+#API THAT RETURNS ALL USERS 
+@app.route('/returnAllUsers', methods=['GET', 'POST'])
+def allUsersApi():
+    if request.method == 'POST':
+        cursor=None
+        cursor=conn.cursor()
+        
+        sql = "SELECT * FROM admin WHERE isactive=true"
+        cursor.execute(sql)
+        print(cursor.execute(sql))
+        row = cursor.fetchone()
+
+        #if 'adminid' in session:
+        if cursor.execute(sql)==1:
+            #_adminid=session['adminid']
+            row = cursor.fetchone()
+            _adminid=row[0]
+
+            # get waitlist users
+            sql="SELECT * FROM users"
+            cursor.execute(sql)
+            #print (cursor.execute(sql))
+            records = cursor.fetchall()
+            jsonuser=[]
+            jsonuser.append({'message' : 'You are already logged in', 'Admin id' : _adminid})
+
+            for row in records:
+                _userid=row[0]
+                _firstname=row[1]
+                _lastname=row[2]
+                _address=row[3]
+                _phone=row[4]
+                _email=row[5]
+                _username=row[6]
+                _password=row[7]
+                _usertype=row[8]
+
+                jsonuser.append({'userid' : _userid,
+                                'firstname' : _firstname, 
+                                'lastname' : _lastname, 
+                                'address' : _address, 
+                                'phone' : _phone, 
+                                'email' : _email, 
+                                'usertype' : _usertype, 
+                                'Option' : 'Approve / Reject'})
+        else:
+            resp = jsonify({'message' : 'Unauthorized access. Admins only'})
+            resp.status_code = 401
+            return resp
+        
+        return jsonify(jsonuser)
+
+
+# GENERAL HOME FOR ALL WITH ALL LISTINGS BOTH SALES AND RENTAL
+@app.route('/main' ,methods=['GET', 'POST'])
+def generallHome():
+    if request.method=='POST':
+            return homeForAll()
+
+    if request.method== 'GET':
+        return 'general home page frontend'
+
+
+######################################################## R E G I S T E R  A P I ##########################################################
 
 # REGISTER
 @app.route('/register' ,methods=['GET', 'POST'])
@@ -69,6 +125,7 @@ def register():
     if request.method== 'GET':
         return 'register frontend'
 
+######################################################## A D M I N  A P I s ##########################################################
 
 # ADMIN
 @app.route('/adminlogin', methods=['GET', 'POST'])
@@ -266,6 +323,7 @@ def reportedListings():
     if request.method == 'POST':
         cursor=None
         cursor=conn.cursor()
+        listingdetails ={}
         
         sql = "SELECT * FROM admin WHERE isactive=true"
         cursor.execute(sql)
@@ -310,15 +368,18 @@ def reportedListings():
                 
                 cols =[i[0] for i in columns]   
                 for col,val in zip(cols,rec):
-                    rentlistingdetails[col]=val    
-                #image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
-                #image = get_image(image_path)
-                #listingdetails['image']= image
+                    image=""
+                    image_path=""
+                    listingdetails[col]=val
+                if (listingdetails['filename']):    
+                    image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
+                    image = get_image(image_path)
+                listingdetails['image']= image
                 print(jsonuser)
                 jsonuser.append({'reportid':_rentreportedid,
                                 'rentlistingid':_rentlistingid,
                                 'reportedcomments': _rentlistingcomments,
-                                'rent listing details':rentlistingdetails,
+                                'rent listing details':listingdetails,
                                 'options':'Keep Listing / Remove Rental Listing / Remove User '})
                 rentlistingdetails.clear()
 
@@ -345,10 +406,13 @@ def reportedListings():
                 
                 cols =[i[0] for i in columns]   
                 for col,val in zip(cols,rec):
-                    salelistingdetails[col]=val    
-                #image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
-                #image = get_image(image_path)
-                #listingdetails['image']= image
+                    image=""
+                    image_path=""
+                    salelistingdetails[col]=val 
+                if (listingdetails['filename']):     
+                    image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
+                    image = get_image(image_path)
+                listingdetails['image']= image
                 
                 jsonuser.append(salelistingdetails)
 
@@ -505,13 +569,23 @@ def removeUser():
                     userid=row[14]
                     cursor.execute("DELETE FROM rentlisting WHERE landlordid=%s",[userid])
                     conn.commit()
-                    cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
-                    conn.commit()
+            
                 else:
                     userid=row[15]
                     cursor.execute("DELETE FROM rentlisting WHERE relatorid=%s",[userid])
                     conn.commit()
-                    cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
+
+                
+                cursor.execute("DELETE FROM rentapplication WHERE landlordid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM rentapplication WHERE realtorid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
+                if cursor.execute:
                     conn.commit()
  
             else:
@@ -521,13 +595,21 @@ def removeUser():
                     userid=row[11]
                     cursor.execute("DELETE FROM salelisting WHERE sellerid=%s",[userid])
                     conn.commit()
-                    cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
-                    conn.commit()
                 else:
                     userid=row[12]
                     cursor.execute("DELETE FROM salelisting WHERE relatorid=%s",[userid])
                     conn.commit()
-                    cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
+
+                cursor.execute("DELETE FROM saleapplication WHERE sellerid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM saleapplication WHERE sellerrealtorid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
+                if cursor.execute:
                     conn.commit()
 
             cursor.execute("DELETE FROM reportedlistings WHERE reportedid=%s",[_reportedlistingid])
@@ -545,27 +627,154 @@ def removeUser():
 
 
 
+#ADMIN REMOVES USER AND ALL HIS POSTINGS WITHOUT REPORTING FUNC
+@app.route('/adminlogin/adminHome/allUsers/removeuser', methods=['GET', 'POST'])
+def kickUser():
+    if request.method == 'POST':
+        cursor=None
+        cursor=conn.cursor()
+        
+        sql = "SELECT * FROM admin WHERE isactive=true"
+        cursor.execute(sql)
+        print(cursor.execute(sql))
+        row = cursor.fetchone()
+
+        #if 'adminid' in session:
+        if cursor.execute(sql)==1:
+            #_adminid=session['adminid']
+            row = cursor.fetchone()
+            _adminid=row[0]
+
+            #get the reportedlisting id
+            _json = request.get_json()
+            userid=_json['userid']
+
+            cursor = None
+            cursor = conn.cursor()
+
+            sql = "SELECT * FROM users WHERE userid=%s"
+            sql_where = (userid,)
+
+            cursor.execute(sql, sql_where)
+            row = cursor.fetchone()
+            usertype=row[8]
+
+            if usertype=='renter':
+                cursor.execute("DELETE FROM rentapplication WHERE renterid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM favorites WHERE userid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
+                conn.commit()
+
+            if usertype=='buyer':
+                cursor.execute("DELETE FROM saleapplication WHERE buyerid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM favorites WHERE userid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
+                conn.commit()
+
+            if usertype=='landlord':
+                cursor.execute("DELETE FROM rentapplication WHERE landlordid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM rentlisting WHERE landlordid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
+                conn.commit()
+
+            if usertype=='seller':
+                cursor.execute("DELETE FROM saleapplication WHERE sellerid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM salelisting WHERE sellerid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
+                conn.commit()
+
+            if usertype=='realtor':
+                cursor.execute("DELETE FROM saleapplication WHERE buyerrealtorid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM saleapplication WHERE sellerrealtorid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM rentapplication WHERE realtorid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM favorites WHERE userid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM salelisting WHERE realtorid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM rentlisting WHERE realtorid=%s",[userid])
+                if cursor.execute:
+                    conn.commit()
+
+                cursor.execute("DELETE FROM users WHERE userid=%s",[userid])
+                conn.commit()
+                 
+            return jsonify({'Notification' :' Following user and his data is removed from the application'})
+
+        else:
+            resp = jsonify({'message' : 'Unauthorized access. Admins only'})
+            resp.status_code = 401
+            return resp
+
+    if request.method == 'GET':
+        return 'admin removes user page'
+
+
+
 #RENTER REPORT LISTING
 @app.route('/renter/renterHome/dispolaylisting/reportListing', methods=['GET', 'POST'])
 def reportLandlordListing():
     if request.method == 'POST':
-
-        #check for renter session
+        cursor=None
+        cursor=conn.cursor()
 
         #get the listing id
         _json = request.get_json()
         _listingid=_json['listingid']
         _listingcomment=_json['listingcomment']
 
-        cursor = None
-        cursor = conn.cursor()
+        print("this is "+str(loggedinid))
+        
+        count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+        print(count)
 
-        sql = "INSERT INTO reportedlistings (listingid,listingtype,comments) VALUES (%s,%s,%s);"
-        sql_insert=(_listingid,'rentlisting',_listingcomment,)
-        cursor.execute(sql,sql_insert)
-        conn.commit()
-        cursor.close()
-        return jsonify({'Notification' :' Following listing is reported'})
+        if count==1:
+            row = cursor.fetchone()
+            id=row[0]
+            usertype=row[8]
+
+            sql = "INSERT INTO reportedlistings (listingid,listingtype,comments) VALUES (%s,%s,%s);"
+            sql_insert=(_listingid,'rentlisting',_listingcomment,)
+            cursor.execute(sql,sql_insert)
+            conn.commit()
+            cursor.close()
+            return jsonify({'Notification' :' Following listing is reported'})
 
     if request.method == 'GET':
         return 'renter report listing page'
@@ -575,26 +784,35 @@ def reportLandlordListing():
 def reportSellerListing():
     if request.method == 'POST':
 
-        #check for buyer session
+        cursor=None
+        cursor=conn.cursor()
 
         #get the listing id
         _json = request.get_json()
         _listingid=_json['listingid']
         _listingcomment=_json['listingcomment']
 
-        cursor = None
-        cursor = conn.cursor()
+        print("this is "+str(loggedinid))
+        
+        count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+        print(count)
 
-        sql = "INSERT INTO reportedlistings (listingid,listingtype,comments) VALUES (%s,%s,%s);"
-        sql_insert=(_listingid,'salelisting',_listingcomment,)
-        cursor.execute(sql,sql_insert)
-        conn.commit()
-        cursor.close()
-        return jsonify({'Notification' :' Following listing is reported'})
+        if count==1:
+            row = cursor.fetchone()
+            id=row[0]
+            usertype=row[8]
+
+            sql = "INSERT INTO reportedlistings (listingid,listingtype,comments) VALUES (%s,%s,%s);"
+            sql_insert=(_listingid,'salelisting',_listingcomment,)
+            cursor.execute(sql,sql_insert)
+            conn.commit()
+            cursor.close()
+            return jsonify({'Notification' :' Following listing is reported'})
 
     if request.method == 'GET':
         return 'buyer report listing page'
-    
+
+######################################################## L O G I N  A P I ##########################################################
 
 # LOGIN
 @app.route('/login', methods=['GET', 'POST'])
@@ -653,14 +871,8 @@ def login():
         return 'login frontend'
 
 
-# GENERAL HOME FOR ALL WITH ALL LISTINGS BOTH SALES AND RENTAL
-@app.route('/main' ,methods=['GET', 'POST'])
-def generallHome():
-    if request.method=='POST':
-            return homeForAll()
+######################################################## R E N T E R , B U Y E R , B U Y E R - R E A L T O R  A P I s ##########################################################
 
-    if request.method== 'GET':
-        return 'general home page frontend'
 
 
 # HOME PAGE WITH ALL LISTINGS FOR : RENTER , BUYER , BUYER REALTOR
@@ -772,6 +984,168 @@ def inbox():
 
     if request.method== 'GET':
         return 'inbox page frontend'
+
+#RENTER BUYER OR BUYER REALTOR VIEWS PENDING APPLICATIONS
+@app.route('/login/home/pending' ,methods=['GET', 'POST'])
+def pending():
+    if request.method=='POST':
+        cursor=None
+        cursor=conn.cursor()
+        
+        print("this is "+str(loggedinid))
+        
+        count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+        print(count)
+
+        if count==1:
+            row = cursor.fetchone()
+            id=row[0]
+            usertype=row[8]
+        if usertype=='renter':
+            renterid = id
+            return renterPending(renterid)
+        if usertype=='buyer':
+            buyerid = id
+            return buyerPending(buyerid)
+        if usertype=='realtor':
+            realtorid = id
+            return buyerPending(realtorid)
+        else:
+            resp = jsonify({'message' : 'Unauthorized. Please log in as buyer, renter or realtor'})
+            resp.status_code = 401
+            return resp
+
+    if request.method== 'GET':
+        return 'pending page frontend'
+
+#RENTER BUYER OR BUYER REALTOR ADDS A LISTINGS TO FAVORITES
+@app.route('/login/home/reviewListing/favorite' ,methods=['GET', 'POST'])
+def myFavorites():
+    if request.method=='POST':
+        cursor=None
+        cursor=conn.cursor()
+        
+        print("this is "+str(loggedinid))
+        
+        count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+        print(count)
+
+        if count==1:
+            row = cursor.fetchone()
+            id=row[0]
+            usertype=row[8]
+        if usertype=='renter':
+            renterid = id
+            return addToFavorites(renterid)
+        if usertype=='buyer':
+            buyerid = id
+            return addToFavorites(buyerid)
+        if usertype=='realtor':
+            realtorid = id
+            return addToFavorites(realtorid)
+        else:
+            resp = jsonify({'message' : 'Unauthorized. Please log in as buyer, renter or realtor'})
+            resp.status_code = 401
+            return resp
+
+    if request.method== 'GET':
+        return 'add to fav frontend'
+
+#RENTER BUYER OR BUYER REALTOR REMOVES A LISTING FROM FAVORITES
+@app.route('/login/home/myFavorites/remove' ,methods=['GET', 'POST'])
+def removeFavorite():
+    if request.method=='POST':
+        cursor=None
+        cursor=conn.cursor()
+        
+        print("this is "+str(loggedinid))
+        
+        count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+        print(count)
+
+        if count==1:
+            row = cursor.fetchone()
+            id=row[0]
+            usertype=row[8]
+        if usertype=='renter':
+            renterid = id
+            return removeFromFav(renterid)
+        if usertype=='buyer':
+            buyerid = id
+            return removeFromFav(buyerid)
+        if usertype=='realtor':
+            realtorid = id
+            return removeFromFav(realtorid)
+        else:
+            resp = jsonify({'message' : 'Unauthorized. Please log in as buyer, renter or realtor'})
+            resp.status_code = 401
+            return resp
+
+    if request.method== 'GET':
+        return 'remove from fav frontend'
+
+
+#RENTER BUYER OR BUYER REALTOR VIEWS FAVORITES
+@app.route('/login/home/myFavorites' ,methods=['GET', 'POST'])
+def viewmyFavorite():
+    if request.method=='POST':
+        cursor=None
+        cursor=conn.cursor()
+        
+        print("this is "+str(loggedinid))
+        
+        count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+        print(count)
+
+        if count==1:
+            row = cursor.fetchone()
+            id=row[0]
+            usertype=row[8]
+        if usertype=='renter':
+            renterid = id
+            return viewFav(renterid)
+        if usertype=='buyer':
+            buyerid = id
+            return viewFav(buyerid)
+        if usertype=='realtor':
+            realtorid = id
+            return viewFav(realtorid)
+        else:
+            resp = jsonify({'message' : 'Unauthorized. Please log in as buyer, renter or realtor'})
+            resp.status_code = 401
+            return resp
+
+    if request.method== 'GET':
+        return 'remove from fav frontend'
+
+######################################################## S E A R C H   A P I s ##########################################################
+
+#SEARCH API FOR ALL ROLES
+@app.route('/login/search' ,methods=['GET', 'POST'])
+def searchAPI():
+    if request.method=='POST':
+        cursor=None
+        cursor=conn.cursor()
+        
+        print("this is "+str(loggedinid))
+        
+        count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+        print(count)
+
+        if count==1:
+            row = cursor.fetchone()
+            id=row[0]
+            usertype=row[8]
+            return searchItAll()
+        else:
+            resp = jsonify({'message' : 'Unauthorized. Please log in as buyer, renter or realtor'})
+            resp.status_code = 401
+            return resp
+
+    if request.method== 'GET':
+        return 'search frontend'
+
+######################################################## L A N D L O R D ,  L A N D L O R D - R E A L T O R  A P I s ##########################################################
 
 # LANDLORD OR LANDLORD REALTOR CREATE LISTING
 @app.route('/login/createRentalListing' ,methods=['GET', 'POST'])
@@ -1075,6 +1449,9 @@ def landlordRejectApplication():
         return 'landlord rejects renters application page frontend'
 
 
+######################################################## S E L L E R ,  S E L L E R - R E A L T O R   A P I s ##########################################################
+
+
 
 #SELLER OR SELLER REALTOR CREATELISTING
 @app.route('/login/createSaleListing' ,methods=['GET', 'POST'])
@@ -1167,10 +1544,10 @@ def sellerSelectListings():
 
             usertype=row[8]
 
-        if useretype=='seller':
+        if usertype=='seller':
             sellerid = id
             return displaySelectedSaleListing(sellerid)
-        if usertype=='renter':
+        if usertype=='realtor':
             realtorid = id
             return displaySelectedSaleListing(realtorid)
         else:
@@ -1381,7 +1758,36 @@ def sellerRejectApplication():
 
 
 
-######################################################## S A L E S ##########################################################
+######################################################## L O G O U T ##########################################################
+
+# LOGOUT
+@app.route('/logout' ,methods=['GET', 'POST'])
+def logout():
+    if request.method == 'POST':
+        cursor=None
+        cursor=conn.cursor()
+        
+        print("this is "+str(loggedinid))
+
+        count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+        print(count)
+
+        if count==1:
+            row = cursor.fetchone()
+            _userid=row[0]
+            
+           # updatesql = "UPDATE users SET isactive=false"
+            cursor.execute("UPDATE users SET isactive=false WHERE userid=%s",[loggedinid])
+            conn.commit()
+
+        return jsonify({'message' : 'You successfully logged out'})
+
+    if request.method== 'GET':
+        return 'logout frontend'
+
+
+
+######################################################## S A L E S  M O D E L ##########################################################
 
 def createSaleListing(id):
     cursor = None
@@ -1420,9 +1826,11 @@ def createSaleListing(id):
             _hometype = _form['hometype']
             _parkingtype = _form['parkingtype']
             _yearbuilt = _form['yearbuilt']
-            _status= _form['status']
+            _status= 'open'
             _price = _form['price']
-            filename =''
+            _openhouse=_form['openhouse']
+            filename =None
+            image=''
 
             if request.files:
                 image = request.files['image']
@@ -1433,8 +1841,8 @@ def createSaleListing(id):
                     image.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))      
 
             cursor = conn.cursor()
-            sql = "INSERT INTO salelisting (address,zipcode,area,noofbedrooms,noofbathrooms,hometype,parkingtype,yearbuilt,status,price,sellerid,realtorid,filename) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);"
-            sql_insert=(_address, _zipcode, _area, _noofbedrooms, _noofbathrooms, _hometype, _parkingtype, _yearbuilt, _status, _price,id, _realtorid,filename,)
+            sql = "INSERT INTO salelisting (address,zipcode,area,noofbedrooms,noofbathrooms,hometype,parkingtype,yearbuilt,status,price,sellerid,realtorid,openhouse,filename) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);"
+            sql_insert=(_address, _zipcode, _area, _noofbedrooms, _noofbathrooms, _hometype, _parkingtype, _yearbuilt, _status, _price,id, _realtorid,_openhouse, filename,)
             cursor.execute(sql,sql_insert)
             conn.commit()
             jsonuser.append({'Notification' : 'Your listing has been added successfully'})
@@ -1456,9 +1864,11 @@ def createSaleListing(id):
             _hometype = _form['hometype']
             _parkingtype = _form['parkingtype']
             _yearbuilt = _form['yearbuilt']
-            _status= _form['status']
+            _status= 'open'
             _price = _form['price']
-            filename =''
+            _openhouse=_form['openhouse']
+            filename =None
+            image=''
 
             if request.files:
                 image = request.files['image']
@@ -1469,8 +1879,8 @@ def createSaleListing(id):
                     image.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))      
 
             cursor = conn.cursor()
-            sql = "INSERT INTO salelisting (address,zipcode,area,noofbedrooms,noofbathrooms,hometype,parkingtype,yearbuilt,status,price,sellerid,realtorid,filename) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);"
-            sql_insert=(_address, _zipcode, _area, _noofbedrooms, _noofbathrooms, _hometype, _parkingtype, _yearbuilt, _status, _price,_sellerid,id,filename,)
+            sql = "INSERT INTO salelisting (address,zipcode,area,noofbedrooms,noofbathrooms,hometype,parkingtype,yearbuilt,status,price,sellerid,realtorid,openhouse,filename) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);"
+            sql_insert=(_address, _zipcode, _area, _noofbedrooms, _noofbathrooms, _hometype, _parkingtype, _yearbuilt, _status, _price,_sellerid,id,_openhouse,filename,)
             cursor.execute(sql,sql_insert)
             conn.commit()
             jsonuser.append({'Notification' : 'Your listing has been added successfully'})
@@ -1491,7 +1901,7 @@ def ViewMySaleListings(id):
     print(count)
 
 
-    #if 'landlord' in session:
+    #if 'seller' in session:
     if count==1:
         row = cursor.fetchone()
         activeuserid=str(row[0])
@@ -1523,11 +1933,14 @@ def ViewMySaleListings(id):
     cols =[i[0] for i in columns]   
     for record in records:
         _list={}
+        image, image_path='',''
         for col,val in zip(cols,record):
-            _list[col]=val    
-        image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
-        #image = get_image(image_path)
-        #_list['image']= image
+            _list[col]=val   
+        if (record[-1]):
+            print(str(record[-1]))    
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
+            image = get_image(image_path) 
+        _list['image']= image
         #print(image_path)
         _listings.append(_list)
         _listings.append('options :Remove Sale Listing /Update Listing/ View applications for this Listing')
@@ -2001,10 +2414,12 @@ def displaySelectedSaleListing(id):
         
         cols =[i[0] for i in columns]   
         for col,val in zip(cols,rec):
-            listingdetails[col]=val    
-        image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
-        #image = get_image(image_path)
-        #listingdetails['image']= image
+            image, image_path='',''
+            listingdetails[col]=val 
+        if (listingdetails['filename']):
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
+            image = get_image(image_path)
+        listingdetails['image']= image
         
         jsonuser.append(listingdetails)
 
@@ -2013,7 +2428,7 @@ def displaySelectedSaleListing(id):
         _realtorfirstname=activeusername
         jsonuser.append({realtorid: 'id', _realtorfirstname : 'name'})
         
-        sql_select = "SELECT * FROM salelisting where salelistingid =%s AND relatorid=%s"
+        sql_select = "SELECT * FROM salelisting where salelistingid =%s AND realtorid=%s"
         sql_select_where= (_salelistingid,id,)
         cursor.execute(sql_select, sql_select_where)
 
@@ -2026,10 +2441,12 @@ def displaySelectedSaleListing(id):
         
         cols =[i[0] for i in columns]   
         for col,val in zip(cols,rec):
-            listingdetails[col]=val    
-        image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
-        #image = get_image(image_path)
-        #listingdetails['image']= image
+            image, image_path='',''
+            listingdetails[col]=val 
+        if (listingdetails['filename']):
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
+            image = get_image(image_path)
+        listingdetails['image']= image
         
         jsonuser.append(listingdetails)
    
@@ -2074,11 +2491,15 @@ def buyerHomePage(id):
         cols =[i[0] for i in columns]   
         for record in records:
             _list={}
+            image=""
+            image_path=""
             for col,val in zip(cols,record):
-                _list[col]=val    
-            image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
-            #image = get_image(image_path)
-            #_list['image']= image
+                _list[col]=val 
+            if (record[-1]):
+                print(str(record[-1]))    
+                image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
+                image = get_image(image_path)   
+            _list['image']= image
             _listings.append(_list)
 
         jsonuser.append({'sale listings':_listings})
@@ -2089,7 +2510,7 @@ def buyerHomePage(id):
         _realtorfirstname=activeusername
         jsonuser.append({realtorid: 'id', _realtorfirstname : 'name'})
 
-        sql ="select * from salelisting limit 10;"
+        sql ="select * from salelisting;"
         cursor.execute(sql)
         records = cursor.fetchall()
         records=list(records)
@@ -2101,11 +2522,14 @@ def buyerHomePage(id):
         cols =[i[0] for i in columns]   
         for record in records:
             _list={}
+            image=''
+            image_path=''
             for col,val in zip(cols,record):
-                _list[col]=val    
-            image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
-            #image = get_image(image_path)
-            #_list['image']= image
+                _list[col]=val   
+            if (record[-1]): 
+                image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
+                image = get_image(image_path)
+            _list['image']= image
             _listings.append(_list)
 
         jsonuser.append({'sale listings':_listings})
@@ -2157,10 +2581,12 @@ def buyerReviewListing(id):
         
         cols =[i[0] for i in columns]  
         for col,val in zip(cols,rec):
-            listingdetails[col]=val    
-        image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
-        #image = get_image(image_path)
-        #listingdetails['image']= image
+            listingdetails[col]=val
+            image,image_path='','' 
+        if (listingdetails['filename']):   
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
+            image = get_image(image_path)
+        listingdetails['image']= image
 
         jsonuser.append(listingdetails)
 
@@ -2172,7 +2598,7 @@ def buyerReviewListing(id):
                 _contact = _json['buyercontact']
                 _email = _json['buyeremail']
                 _offerprice = _json['offerprice']
-                _status= _json['status']
+                _status= None
                 sql ="SELECT salelistingid,sellerid,realtorid from salelisting where salelistingid=%s;"
                 sql_where =(_salelistingid,)
                 cursor.execute(sql,sql_where)
@@ -2185,6 +2611,83 @@ def buyerReviewListing(id):
                 conn.commit()
                 
                 jsonuser.append({'Note':'Your application has been submitted!'})
+
+                # sender_email = ""
+                # receiver_email = ""
+                # password = ''
+
+                # message = MIMEMultipart("alternative")
+                # message["Subject"] = "APPLICATION FOR YOUR SALE LISTING"
+                # message["From"] = sender_email
+                # message["To"] = receiver_email
+
+                # # Create the plain-text and HTML version of your message
+
+                # html ="""
+                # <html>
+                # <head>
+                # <style>
+                # table, th, td {
+                # border: 1px solid black;
+                # border-collapse: collapse;
+                # }
+                # th, td {
+                # padding: 5px;
+                # text-align: left;
+                # }
+                # </style>
+                # </head>
+                # <body>
+
+
+                # <h2>Sale Application For Your Listing:</h2>
+                # <h4></h4>
+
+                # <table style="width:100%">
+                # <tr>
+                # <th>Name:</th>
+                # <td>"""+_name+"""</td>
+                # </tr>
+                # <tr>
+                # <th>Buyer Contact:</th>
+                # <td>"""+_contact+"""</td>
+                # </tr>
+                # <tr>
+                # <th>Buyer Email:</th>
+                # <td>"""+_email+"""</td>
+                # </tr>
+                # <tr>
+                # <th>Offer Price:</th>
+                # <td>"""+_offerprice+"""</td>
+                # </tr>
+                # <tr>
+                # <th>Status:</th>
+                # <td>"""+_status+"""</td>
+                # </tr>
+                # </table>
+
+                # </body>
+                # </html>
+                # """ 
+
+                # # Turn these into plain/html MIMEText objects
+                # #part1 = MIMEText(text, "plain")
+                # part2 = MIMEText(html, "html")
+
+                # # Add HTML/plain-text parts to MIMEMultipart message
+                # # The email client will try to render the last part first
+                # #message.attach(part1)
+                # message.attach(part2)
+
+                # # Create secure connection with server and send email
+                # context = ssl.create_default_context()
+                # with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+                #     server.login(sender_email, password)
+                #     server.sendmail(
+                #         sender_email, receiver_email, message.as_string()
+                #     )
+
+                # jsonuser.append({'note':'email sent to the Seller.'})
         else:
             jsonuser.append({'Note':' There is errror with the application. it is not filled out'})
 
@@ -2206,10 +2709,12 @@ def buyerReviewListing(id):
 
         cols =[i[0] for i in columns]  
         for col,val in zip(cols,rec):
-            listingdetails[col]=val    
-        image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
-        #image = get_image(image_path)
-        #listingdetails['image']= image
+            listingdetails[col]=val
+            image,image_path='',''
+        if (listingdetails['filename']):    
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
+            image = get_image(image_path)
+        listingdetails['image']= image
 
         jsonuser.append(listingdetails)
 
@@ -2221,7 +2726,7 @@ def buyerReviewListing(id):
                 _contact = _json['buyercontact']
                 _email = _json['buyeremail']
                 _offerprice = _json['offerprice']
-                _status= _json['status']
+                _status= None
                 sql ="SELECT salelistingid,sellerid,realtorid from salelisting where salelistingid=%s;"
                 sql_where =(_salelistingid,)
                 cursor.execute(sql,sql_where)
@@ -2233,6 +2738,84 @@ def buyerReviewListing(id):
                 cursor.execute(sql_insert,sql_insert_where)
                 conn.commit()
                 jsonuser.append({'Note':'Your application has been submitted!'})
+
+
+                sender_email = "zgravity207@gmail.com"
+                receiver_email = "arselan.alvi@sjsu.edu"
+                password = 'cmpe2072020'
+
+                message = MIMEMultipart("alternative")
+                message["Subject"] = "APPLICATION FOR YOUR SALE LISTING"
+                message["From"] = sender_email
+                message["To"] = receiver_email
+
+                # Create the plain-text and HTML version of your message
+
+                html ="""
+                <html>
+                <head>
+                <style>
+                table, th, td {
+                border: 1px solid black;
+                border-collapse: collapse;
+                }
+                th, td {
+                padding: 5px;
+                text-align: left;
+                }
+                </style>
+                </head>
+                <body>
+
+
+                <h2>Sale Application For Your Listing:</h2>
+                <h4></h4>
+
+                <table style="width:100%">
+                <tr>
+                <th>Name:</th>
+                <td>"""+_name+"""</td>
+                </tr>
+                <tr>
+                <th>Buyer Contact:</th>
+                <td>"""+_contact+"""</td>
+                </tr>
+                <tr>
+                <th>Buyer Email:</th>
+                <td>"""+_email+"""</td>
+                </tr>
+                <tr>
+                <th>Offer Price:</th>
+                <td>"""+_offerprice+"""</td>
+                </tr>
+                <tr>
+                <th>Status:</th>
+                <td>"""+_status+"""</td>
+                </tr>
+                </table>
+
+                </body>
+                </html>
+                """ 
+
+                # Turn these into plain/html MIMEText objects
+                #part1 = MIMEText(text, "plain")
+                part2 = MIMEText(html, "html")
+
+                # Add HTML/plain-text parts to MIMEMultipart message
+                # The email client will try to render the last part first
+                #message.attach(part1)
+                message.attach(part2)
+
+                # Create secure connection with server and send email
+                #context = ssl.create_default_context()
+                with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+                    server.login(sender_email, password)
+                    server.sendmail(
+                        sender_email, receiver_email, message.as_string()
+                    )
+
+                jsonuser.append({'note':'email sent to the Seller.'})
             
         else:
             jsonuser.append({'Note':' There is errror with the application. it is out filled out'})
@@ -2310,8 +2893,79 @@ def buyerInbox(id):
 
     return jsonify(jsonuser)
 
+def buyerPending(id):
+    listingdetails ={}
+    _application=[]
+    cursor = None
+    cursor = conn.cursor()
+    sql=''
+    jsonuser=[]
 
-######################################################## R E N T A L S ########################################################## 
+
+    #if 'user' in session:
+    print("this is "+str(loggedinid))
+
+    count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+    print(count)
+    
+
+    #if 'seller' in session:
+    if count==1:
+        row = cursor.fetchone()
+        activeuserid=str(row[0])
+        activeusername=row[1]
+
+        usertype=row[8]
+
+    if usertype=='buyer':
+        buyerid = activeuserid
+        _buyerfirstname=activeusername
+        jsonuser.append({buyerid: 'id', _buyerfirstname : 'name'})
+
+        sql ="select * from saleapplication where buyerid=%s and status is null;"
+        sql_where= (id,)
+        cursor.execute(sql,sql_where)
+        records = cursor.fetchall()
+        records=list(records)
+        sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='saleapplication';"
+        cursor.execute(sql_column)
+        columns=list(cursor.fetchall())
+        
+        cols =[i[0] for i in columns]   
+        for record in records:
+            _list={}
+            for col,val in zip(cols,record):
+                _list[col]=val    
+            _application.append(_list)   
+        jsonuser.append({'Applications':_application})
+
+    if usertype=='realtor':
+        realtorid = activeuserid
+        _realtorfirstname=activeusername
+        jsonuser.append({realtorid: 'id', _realtorfirstname : 'name'})
+
+        sql ="select * from saleapplication where buyerrealtorid=%s and status is null;"
+        sql_where= (id,)
+        cursor.execute(sql,sql_where)
+        records = cursor.fetchall()
+        records=list(records)
+        sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='saleapplication';"
+        cursor.execute(sql_column)
+        columns=list(cursor.fetchall())
+        
+        cols =[i[0] for i in columns]   
+        for record in records:
+            _list={}
+            for col,val in zip(cols,record):
+                _list[col]=val    
+            _application.append(_list)   
+        jsonuser.append({'Applications':_application})
+
+    return jsonify(jsonuser)
+
+
+
+######################################################## R E N T A L S  M O D E L ########################################################## 
 
 def createRentalListing(id):
     cursor = None
@@ -2351,12 +3005,13 @@ def createRentalListing(id):
             _hometype = _form['hometype']
             _parkingtype = _form['parkingtype']
             _yearbuilt = _form['yearbuilt']
-            _status= _form['status']
+            _status= 'open'
             _price = _form['price']
             _leaseterms = _form['leaseterms']
             _availabilitydate= _form['availabilitydate']
             _securitydeposit = _form['securitydeposit']
-            filename=''
+            _visits=_form['visits']
+            filename=None
             image=''
 
             if request.files:
@@ -2364,11 +3019,10 @@ def createRentalListing(id):
                 if image and valid_file(image.filename):
                     filename = secure_filename(image.filename)
                     print(UPLOAD_FOLDER)
-                    print(filename)
                     image.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
 
-            sql = "INSERT INTO rentlisting (address,zipcode,area,noofbedrooms,noofbathrooms,hometype,parkingtype,yearbuilt,status,price,leaseterms,availabilitydate,securitydeposit,landlordid,realtorid,filename) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);"
-            sql_insert=(_address, _zipcode, _area, _noofbedrooms, _noofbathrooms, _hometype, _parkingtype, _yearbuilt, _status, _price, _leaseterms, _availabilitydate, _securitydeposit, id, _realtorid,filename,)
+            sql = "INSERT INTO rentlisting (address,zipcode,area,noofbedrooms,noofbathrooms,hometype,parkingtype,yearbuilt,status,price,leaseterms,availabilitydate,securitydeposit,landlordid,realtorid,openhouse,filename) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);"
+            sql_insert=(_address, _zipcode, _area, _noofbedrooms, _noofbathrooms, _hometype, _parkingtype, _yearbuilt, _status, _price, _leaseterms, _availabilitydate, _securitydeposit, id, _realtorid, _visits, filename,)
             cursor.execute(sql,sql_insert)
             conn.commit()
             jsonuser.append({'Notification' : 'Your listing has been added successfully'})
@@ -2390,12 +3044,13 @@ def createRentalListing(id):
             _hometype = _form['hometype']
             _parkingtype = _form['parkingtype']
             _yearbuilt = _form['yearbuilt']
-            _status= _form['status']
+            _status= 'open'
             _price = _form['price']
             _leaseterms = _form['leaseterms']
             _availabilitydate= _form['availabilitydate']
             _securitydeposit = _form['securitydeposit']
-            filename=''
+            _visits=_form['visits']
+            filename=None
             image=''
 
             if request.files:
@@ -2406,8 +3061,8 @@ def createRentalListing(id):
                     print(filename)
                     image.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
 
-            sql = "INSERT INTO rentlisting (address,zipcode,area,noofbedrooms,noofbathrooms,hometype,parkingtype,yearbuilt,status,price,leaseterms,availabilitydate,securitydeposit,landlordid,realtorid,filename) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);"
-            sql_insert=(_address, _zipcode, _area, _noofbedrooms, _noofbathrooms, _hometype, _parkingtype, _yearbuilt, _status, _price, _leaseterms, _availabilitydate, _securitydeposit, _landlordid,id,filename,)
+            sql = "INSERT INTO rentlisting (address,zipcode,area,noofbedrooms,noofbathrooms,hometype,parkingtype,yearbuilt,status,price,leaseterms,availabilitydate,securitydeposit,landlordid,realtorid,openhouse,filename) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);"
+            sql_insert=(_address, _zipcode, _area, _noofbedrooms, _noofbathrooms, _hometype, _parkingtype, _yearbuilt, _status, _price, _leaseterms, _availabilitydate, _securitydeposit, _landlordid,id,_visits,filename,)
             cursor.execute(sql,sql_insert)
             conn.commit()
             jsonuser.append({'Notification' : 'Your listing has been added successfully'})
@@ -2579,12 +3234,16 @@ def ViewMyRentalListings(id):
 
         cols =[i[0] for i in columns]   
         for record in records:
-            _list={}
+            _list, image={},''
+            image_path=''
             for col,val in zip(cols,record):
-                _list[col]=val    
-            image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
-            #image = get_image(image_path)
-            #_list['image']= image
+                _list[col]=val
+            if (record[-1]):
+                print(str(record[-1]))    
+                image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
+                image = get_image(image_path)
+            _list['image']= image
+
             #print(image_path)
             _listings.append(_list)
             _listings.append('options :Remove Rental Listing /Update Listing/ View applications for this Listing')
@@ -2961,10 +3620,12 @@ def displaySelectedRentListing(id):
         
         cols =[i[0] for i in columns]   
         for col,val in zip(cols,rec):
-            listingdetails[col]=val    
-        image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
-        #image = get_image(image_path)
-        #listingdetails['image']= image
+            image, image_path='',''
+            listingdetails[col]=val 
+        if (listingdetails['filename']):
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
+            image = get_image(image_path)
+        listingdetails['image']= image
         
         jsonuser.append(listingdetails)
   
@@ -2987,10 +3648,12 @@ def displaySelectedRentListing(id):
         
         cols =[i[0] for i in columns]   
         for col,val in zip(cols,rec):
-            listingdetails[col]=val    
-        image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
-        #image = get_image(image_path)
-        #listingdetails['image']= image
+            image, image_path='',''
+            listingdetails[col]=val 
+        if (listingdetails['filename']):
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
+            image = get_image(image_path)
+        listingdetails['image']= image
         
         jsonuser.append(listingdetails)
 
@@ -3035,11 +3698,14 @@ def renterHomePage(id):
         cols =[i[0] for i in columns]   
         for record in records:
             _list={}
+            image,image_path='',''
             for col,val in zip(cols,record):
-                _list[col]=val    
-            image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
-            #image = get_image(image_path)
-            #_list['image']= image
+                _list[col]=val  
+            if (record[-1]):
+                print(str(record[-1]))    
+                image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
+                image = get_image(image_path)  
+            _list['image']= image
             #print(image_path)
             _listings.append(_list)
 
@@ -3091,10 +3757,12 @@ def renterReviewListing(id):
         
         cols =[i[0] for i in columns]   
         for col,val in zip(cols,rec):
-            listingdetails[col]=val    
-        #image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
-        #image = get_image(image_path)
-        #listingdetails['image']= image
+            listingdetails[col]=val 
+            image,image_path='',''
+        if (listingdetails['filename']):   
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ listingdetails['filename']
+            image = get_image(image_path)
+        listingdetails['image']= image
 
         jsonuser.append(listingdetails)
 
@@ -3117,6 +3785,83 @@ def renterReviewListing(id):
                 conn.commit()
 
                 jsonuser.append({'Note':'Your application has been submitted!'})
+
+                # sender_email = ""
+                # receiver_email = ""
+                # password = ''
+
+                # message = MIMEMultipart("alternative")
+                # message["Subject"] = "APPLICATION FOR YOUR SALE LISTING"
+                # message["From"] = sender_email
+                # message["To"] = receiver_email
+
+                # # Create the plain-text and HTML version of your message
+
+                # html ="""
+                # <html>
+                # <head>
+                # <style>
+                # table, th, td {
+                # border: 1px solid black;
+                # border-collapse: collapse;
+                # }
+                # th, td {
+                # padding: 5px;
+                # text-align: left;
+                # }
+                # </style>
+                # </head>
+                # <body>
+
+
+                # <h2>Sale Application For Your Listing:</h2>
+                # <h4></h4>
+
+                # <table style="width:100%">
+                # <tr>
+                # <th>Name:</th>
+                # <td>"""+_name+"""</td>
+                # </tr>
+                # <tr>
+                # <th>Renter Contact:</th>
+                # <td>"""+_contact+"""</td>
+                # </tr>
+                # <tr>
+                # <th>Renter Email:</th>
+                # <td>"""+_email+"""</td>
+                # </tr>
+                # <tr>
+                # <th>Credit score:</th>
+                # <td>"""+_creditscore+"""</td>
+                # </tr>
+                # <tr>
+                # <th>Emp info:</th>
+                # <td>"""+_empinfo+"""</td>
+                # </tr>
+                # </table>
+
+                # </body>
+                # </html>
+                # """ 
+
+                # # Turn these into plain/html MIMEText objects
+                # #part1 = MIMEText(text, "plain")
+                # part2 = MIMEText(html, "html")
+
+                # # Add HTML/plain-text parts to MIMEMultipart message
+                # # The email client will try to render the last part first
+                # #message.attach(part1)
+                # message.attach(part2)
+
+                # # Create secure connection with server and send email
+                # context = ssl.create_default_context()
+                # with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+                #     server.login(sender_email, password)
+                #     server.sendmail(
+                #         sender_email, receiver_email, message.as_string()
+                #     )
+
+                # jsonuser.append({'note':'email sent to the Seller.'})
             
         else:
             jsonuser.append({'Note':' There is errror with the application. it is not filled out'})
@@ -3171,6 +3916,57 @@ def renterInbox(id):
 
     return jsonify(jsonuser)
 
+def renterPending(id): 
+    listingdetails ={}
+    _application=[]
+    cursor = None
+    cursor = conn.cursor()
+    sql=''
+    jsonuser=[]
+
+    #if 'user' in session:
+    print("this is "+str(loggedinid))
+
+    count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+    print(count)
+    
+
+    #if 'renter' in session:
+    if count==1:
+        row = cursor.fetchone()
+        activeuserid=str(row[0])
+        activeusername=row[1]
+
+        usertype=row[8]
+
+    if usertype=='renter':
+        renterid = activeuserid
+        _renterfirstname=activeusername
+        jsonuser.append({renterid: 'id', _renterfirstname : 'name'})
+
+        sql ="select * from rentapplication where renterid=%s and status is null;"
+        sql_where= (id,)
+        cursor.execute(sql,sql_where)
+        records = cursor.fetchall()
+        records=list(records)
+        sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='rentapplication';"
+        cursor.execute(sql_column)
+        columns=list(cursor.fetchall())
+        
+        cols =[i[0] for i in columns]   
+        for record in records:
+            _list={}
+            for col,val in zip(cols,record):
+                _list[col]=val    
+            _application.append(_list)   
+        jsonuser.append({'Applications':_application})
+
+    return jsonify(jsonuser)
+
+
+######################################################## F A V O R I T E S,  S E A R C H,  M A I N - P A G E  A P I s ##########################################################
+
+
 
 #HOME FOR ALL
 def homeForAll():
@@ -3192,11 +3988,14 @@ def homeForAll():
     cols =[i[0] for i in columns]   
     for record in records:
         _list={}
+        image,image_path='',''
         for col,val in zip(cols,record):
-            _list[col]=val    
-        image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
-        #image = get_image(image_path)
-        #_list['image']= image
+            _list[col]=val
+        if (record[-1]):
+            print(str(record[-1]))    
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
+            image = get_image(image_path)    
+        _list['image']= image
         #print(image_path)
         _listings.append(_list)
 
@@ -3214,11 +4013,14 @@ def homeForAll():
     cols =[i[0] for i in columns]   
     for record in records:
         _list={}
+        image,image_path='',''
         for col,val in zip(cols,record):
-            _list[col]=val    
-        image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
-        #image = get_image(image_path)
-        #_list['image']= image
+            _list[col]=val  
+        if (record[-1]):
+            print(str(record[-1]))    
+            image_path = os.getcwd()+'/'+'uploads'+'/'+ str(record[-1])
+            image = get_image(image_path)  
+        _list['image']= image
         _listings.append(_list)
 
     jsonuser.append({'sale listings':_listings})
@@ -3226,38 +4028,352 @@ def homeForAll():
     return jsonify(jsonuser)
 
 
+def addToFavorites(id):
+    cursor = None
+    cursor = conn.cursor()
+    sql=''
+    jsonuser=[]
+    rid=0
+    sid=0
 
-# LOGOUT
-@app.route('/logout' ,methods=['GET', 'POST'])
-def logout():
-    if request.method == 'POST':
-        cursor=None
-        cursor=conn.cursor()
-        
-        print("this is "+str(loggedinid))
+    #if 'user' in session:
+    print("this is "+str(loggedinid))
 
-        count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
-        print(count)
+    count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+    print(count)
 
-        if count==1:
-            row = cursor.fetchone()
-            _userid=row[0]
+    #get the listing id
+    _json = request.get_json()
+    _listingid=_json['listingid']
+
+    if count==1:
+        row = cursor.fetchone()
+        activeuserid=str(row[0])
+        activeusername=row[1]
+        _usertype=row[8]
+
+        if _usertype =='renter':
+            renterid = activeuserid
+            _renterfirstname=activeusername
+            jsonuser.append({renterid: 'id', _renterfirstname : 'name'}) 
+            rid=_listingid 
+
+        if _usertype=='buyer':
+            buyerid = activeuserid
+            _buyerfirstname=activeusername
+            jsonuser.append({buyerid: 'id', _buyerfirstname : 'name'}) 
+            sid= _listingid
+
+        if _usertype=='realtor':
+            realtorid = activeuserid
+            _realtorfirstname=activeusername
+            jsonuser.append({realtorid: 'id', _realtorfirstname : 'name'}) 
+            sid= _listingid
+
+        sql = "Insert into favorites(userid, usertype, rentlistingid, salelistingid) values(%s,%s,%s,%s);"
+        sql_where =(id,_usertype,rid,sid,)
+        cursor.execute(sql,sql_where)
+        conn.commit()
+        jsonuser.append({'Note':'Listing has been favorited!'})
+    else:
+        jsonuser.append({'Error':'cant add to favorites at this time'})
+
+    return jsonify(jsonuser)
+
+
+def removeFromFav(id):
+    cursor = None
+    cursor = conn.cursor()
+    sql=''
+    jsonuser=[]
+    rid=0
+    sid=0
+
+    #if 'user' in session:
+    print("this is "+str(loggedinid))
+
+    count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+    print(count)
+
+    #get the listing id
+    _json = request.get_json()
+    _listingid=_json['listingid']
+
+    if count==1:
+        row = cursor.fetchone()
+        activeuserid=str(row[0])
+        activeusername=row[1]
+        _usertype=row[8]
+
+
+        if _usertype =='renter':
+            renterid = activeuserid
+            _renterfirstname=activeusername
+            jsonuser.append({renterid: 'id', _renterfirstname : 'name'}) 
+            rid=_listingid 
+
+        if _usertype=='buyer':
+            buyerid = activeuserid
+            _buyerfirstname=activeusername
+            jsonuser.append({buyerid: 'id', _buyerfirstname : 'name'}) 
+            sid= _listingid
+
+        if _usertype=='realtor':
+            realtorid = activeuserid
+            _realtorfirstname=activeusername
+            jsonuser.append({realtorid: 'id', _realtorfirstname : 'name'}) 
+            sid= _listingid
+
+        sql = "DELETE from favorites where userid=%s and usertype=%s and rentlistingid=%s and salelistingid=%s ;"
+        sql_where =(id,_usertype,rid,sid,)
+        cursor.execute(sql,sql_where)
+        conn.commit()
+        jsonuser.append({'Note':'Listing has been removed from favorites!'})
+    
+    return jsonify(jsonuser)
+
+def viewFav(id):
+    cursor = None
+    cursor = conn.cursor()
+    sql=''
+    jsonuser=[]
+    _favorites=[]
+
+    #if 'user' in session:
+    print("this is "+str(loggedinid))
+
+    count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+    print(count)
+
+    if count==1:
+        row = cursor.fetchone()
+        activeuserid=str(row[0])
+        activeusername=row[1]
+        _usertype=row[8]
+
+        if _usertype =='renter':
+            renterid = activeuserid
+            _renterfirstname=activeusername
+            jsonuser.append({renterid: 'id', _renterfirstname : 'name'}) 
             
-           # updatesql = "UPDATE users SET isactive=false"
-            cursor.execute("UPDATE users SET isactive=false WHERE userid=%s",[loggedinid])
-            conn.commit()
+            sql = "select * from rentlisting where rentlistingid in (select rentlistingid from favorites where userid =%s);"
+            sql_where =(id,)
+            cursor.execute(sql,sql_where)
+            records = cursor.fetchall()
+            records=list(records)
+            sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='rentlisting';"
+            cursor.execute(sql_column)
+            columns=list(cursor.fetchall())
 
-        return jsonify({'message' : 'You successfully logged out'})
+        if _usertype=='buyer':
+            buyerid = activeuserid
+            _buyerfirstname=activeusername
+            jsonuser.append({buyerid: 'id', _buyerfirstname : 'name'}) 
+            
+            sql = "select * from salelisting where salelistingid in (select salelistingid from favorites where userid =%s);"
+            sql_where =(id,)
+            cursor.execute(sql,sql_where)
+            records = cursor.fetchall()
+            records=list(records)
+            sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='salelisting';"
+            cursor.execute(sql_column)
+            columns=list(cursor.fetchall())
 
-    if request.method== 'GET':
-        return 'logout frontend'
+        if _usertype=='realtor':
+            realtorid = activeuserid
+            _realtorfirstname=activeusername
+            jsonuser.append({realtorid: 'id', _realtorfirstname : 'name'}) 
+            
+            sql = "select * from salelisting where salelistingid in (select salelistingid from favorites where userid =%s);"
+            sql_where =(id,)
+            cursor.execute(sql,sql_where)
+            records = cursor.fetchall()
+            records=list(records)
+            sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='salelisting';"
+            cursor.execute(sql_column)
+            columns=list(cursor.fetchall())
+
+        cols =[i[0] for i in columns]   
+        for record in records:
+            _list={}
+            for col,val in zip(cols,record):
+                _list[col]=val    
+            _favorites.append(_list)   
+        jsonuser.append({'Favorites':_favorites})
+    else:
+        jsonuser.append({'Error message' : 'Please login to view your favorites!'})
+    
+    return jsonify(jsonuser)
+
+def searchItAll():
+    cursor = None
+    cursor = conn.cursor()
+    sql=''
+    jsonuser=[]
+    _listings= []
+    res= None
+
+    #if 'user' in session:
+    print("this is "+str(loggedinid))
+
+    count= cursor.execute("SELECT * FROM users WHERE isactive=true AND userid=%s",[loggedinid])
+    print(count)
+
+    if count==1:
+        row = cursor.fetchone()
+        activeuserid=str(row[0])
+        activeusername=row[1]
+        _usertype=row[8]
+
+        if _usertype =='renter' or _usertype=='landlord':
+            renterid = activeuserid
+            _renterfirstname=activeusername
+            jsonuser.append({renterid: 'id', _renterfirstname : 'name'})
+
+            _json = request.get_json()
+            _address = _json['address']
+            _zipcode = _json['zipcode']
+            _area =_json['area']
+            _noofbedrooms = _json['noofbedrooms'] if _json['noofbedrooms'] else 'null'
+            _noofbathrooms = _json['noofbathrooms'] if _json['noofbathrooms'] else 'null'
+            _hometype = _json['hometype'] if _json['hometype'] else 'null'
+            _parkingtype = _json['parkingtype'] if _json['parkingtype'] else 'null'
+            _yearbuilt = _json['yearbuilt'] if _json['yearbuilt'] else 'null'
+            _status= _json['status'] if _json['status'] else 'null'
+            _pricemin = _json['pricemin'] if _json['pricemin'] else 'null'
+            _pricemax = _json['pricemax'] if _json['pricemax']  else 'null'
+            _leaseterms = _json['leaseterms'] if _json['leaseterms'] else 'null'
+            _availabilitydate= _json['availabilitydate'] if _json['availabilitydate'] else 'null'
+            _securitydeposit = _json['securitydeposit'] if _json['securitydeposit'] else 'null'
+            cursor = conn.cursor()
+
+            sql = "select * from rentlisting where address like '%{}%' and zipcode like '{}%' and area like '%{}%' and noofbedrooms like ifnull({},'%') and noofbathrooms like ifnull({},'%') and hometype like ifnull({},'%') and parkingtype like ifnull({},'%') and yearbuilt>ifnull({},'%') and price between ifnull({},0) and ifnull({},100000000000000) and leaseterms like ifnull({},'%') and availabilitydate like ifnull({},'%') and securitydeposit like ifnull({},'%') and status like ifnull({},'%');".format(_address,_zipcode,_area, _noofbedrooms,_noofbathrooms,_hometype,_parkingtype,_yearbuilt,_pricemin,_pricemax,_leaseterms,_availabilitydate,_securitydeposit,_status)
+            #sql_where=(_zipcode,_area,_noofbedrooms,_noofbathrooms,_hometype,_parkingtype,_yearbuiltfrom,_yearbuiltto,_status,_price_from,_price_to,_leaseterms,_availabilitydate, _securitydeposit,)
+            cursor.execute(sql,)
+            records = cursor.fetchall()
+            records=list(records)
+            sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='rentlisting';"
+            cursor.execute(sql_column)
+            columns=list(cursor.fetchall())
+            #print(records)
+            #print(columns)
+
+        if _usertype=='buyer' or _usertype=='seller':
+            buyerid = activeuserid
+            _buyerfirstname=activeusername
+            jsonuser.append({buyerid: 'id', _buyerfirstname : 'name'}) 
+
+            _json = request.get_json()
+            _address = _json['address']
+            _zipcode = _json['zipcode'] 
+            _area =_json['area'] 
+            _noofbedrooms = _json['noofbedrooms'] if _json['noofbedrooms'] else 'null'
+            _noofbathrooms = _json['noofbathrooms'] if _json['noofbathrooms'] else 'null'
+            _hometype = _json['hometype'] if _json['hometype'] else 'null'
+            _parkingtype = _json['parkingtype'] if _json['parkingtype'] else 'null'
+            _yearbuilt= _json['yearbuilt'] if _json['yearbuilt'] else 'null'
+            #_yearbuiltto = _json['yearbuiltto']
+            _status= _json['status'] if _json['status'] else 'null'
+            _pricemin = _json['pricemin'] if _json['pricemin'] else 'null'
+            _pricemax = _json['pricemax'] if _json['pricemax'] else 'null'
+            cursor = conn.cursor()
+
+            sql = "select * from salelisting where address like '%{}%' and zipcode like '{}%' and area like '%{}%' and noofbedrooms like ifnull({},'%') and noofbathrooms like ifnull({},'%') and hometype like ifnull({},'%') and parkingtype like ifnull({},'%') and yearbuilt>ifnull({},'%') and price between ifnull({},0) and ifnull({},100000000000000) and status like ifnull({},'%');".format(_address,_zipcode,_area, _noofbedrooms,_noofbathrooms,_hometype,_parkingtype,_yearbuilt,_pricemin,_pricemax,_status)
+            #print(sql)
+            #sql_where=(_zipcode, _noofbedrooms,_noofbathrooms,_hometype,_parkingtype,_yearbuiltfrom,_yearbuiltto,_status, )
+            cursor.execute(sql)
+            records = cursor.fetchall()
+            records=list(records)
+            sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='salelisting';"
+            cursor.execute(sql_column)
+            columns=list(cursor.fetchall())  
+            #print(records)
+            #print(columns)
+
+        if _usertype=='realtor':
+            realtorid = activeuserid
+            _realtorfirstname=activeusername
+            jsonuser.append({realtorid: 'id', _realtorfirstname : 'name'}) 
+
+            _json = request.get_json()
+            if _json['option']=="rent":
+                _address = _json['address']
+                _zipcode = _json['zipcode']
+                _area =_json['area']
+                _noofbedrooms = _json['noofbedrooms'] if _json['noofbedrooms'] else 'null'
+                _noofbathrooms = _json['noofbathrooms'] if _json['noofbathrooms'] else 'null'
+                _hometype = _json['hometype'] if _json['hometype'] else 'null'
+                _parkingtype = _json['parkingtype'] if _json['parkingtype'] else 'null'
+                _yearbuilt = _json['yearbuilt'] if _json['yearbuilt'] else 'null'
+                _status= _json['status'] if _json['status'] else 'null'
+                _pricemin = _json['pricemin'] if _json['pricemin'] else 'null'
+                _pricemax = _json['pricemax'] if _json['pricemax']  else 'null'
+                _leaseterms = _json['leaseterms'] if _json['leaseterms'] else 'null'
+                _availabilitydate= _json['availabilitydate'] if _json['availabilitydate'] else 'null'
+                _securitydeposit = _json['securitydeposit'] if _json['securitydeposit'] else 'null'
+                _option =_json['option']
+                cursor = conn.cursor()
+
+                sql = "select * from rentlisting where address like '%{}%' and zipcode like '{}%' and area like '%{}%' and noofbedrooms like ifnull({},'%') and noofbathrooms like ifnull({},'%') and hometype like ifnull({},'%') and parkingtype like ifnull({},'%') and yearbuilt>ifnull({},'%') and price between ifnull({},0) and ifnull({},100000000000000) and leaseterms like ifnull({},'%') and availabilitydate like ifnull({},'%') and securitydeposit like ifnull({},'%') and status like ifnull({},'%');".format(_address,_zipcode,_area, _noofbedrooms,_noofbathrooms,_hometype,_parkingtype,_yearbuilt,_pricemin,_pricemax,_leaseterms,_availabilitydate,_securitydeposit,_status)
+                #sql_where=(_zipcode,_area,_noofbedrooms,_noofbathrooms,_hometype,_parkingtype,_yearbuiltfrom,_yearbuiltto,_status,_price_from,_price_to,_leaseterms,_availabilitydate, _securitydeposit,)
+                cursor.execute(sql,)
+                records = cursor.fetchall()
+                records=list(records)
+                sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='rentlisting';"
+                cursor.execute(sql_column)
+                columns=list(cursor.fetchall())
+                #print(records)
+                #print(columns)
+            
+            elif _json['option']== "buy":
+                _address = _json['address']
+                _zipcode = _json['zipcode'] 
+                _area =_json['area'] 
+                _noofbedrooms = _json['noofbedrooms'] if _json['noofbedrooms'] else 'null'
+                _noofbathrooms = _json['noofbathrooms'] if _json['noofbathrooms'] else 'null'
+                _hometype = _json['hometype'] if _json['hometype'] else 'null'
+                _parkingtype = _json['parkingtype'] if _json['parkingtype'] else 'null'
+                _yearbuilt= _json['yearbuilt'] if _json['yearbuilt'] else 'null'
+                #_yearbuiltto = _json['yearbuiltto']
+                _status= _json['status'] if _json['status'] else 'null'
+                _pricemin = _json['pricemin'] if _json['pricemin'] else 'null'
+                _pricemax = _json['pricemax'] if _json['pricemax'] else 'null'
+                _option =_json['option'] 
+                cursor = conn.cursor()
+
+                sql = "select * from salelisting where address like '%{}%' and zipcode like '{}%' and area like '%{}%' and noofbedrooms like ifnull({},'%') and noofbathrooms like ifnull({},'%') and hometype like ifnull({},'%') and parkingtype like ifnull({},'%') and yearbuilt>ifnull({},'%') and price between ifnull({},0) and ifnull({},100000000000000) and status like ifnull({},'%');".format(_address,_zipcode,_area, _noofbedrooms,_noofbathrooms,_hometype,_parkingtype,_yearbuilt,_pricemin,_pricemax,_status)
+                #print(sql)
+                #sql_where=(_zipcode, _noofbedrooms,_noofbathrooms,_hometype,_parkingtype,_yearbuiltfrom,_yearbuiltto,_status, )
+                cursor.execute(sql)
+                records = cursor.fetchall()
+                records=list(records)
+                sql_column ="SELECT COLUMN_NAME FROM `INFORMATION_SCHEMA`.`COLUMNS` WHERE `TABLE_SCHEMA`='homefinder' AND `TABLE_NAME`='salelisting';"
+                cursor.execute(sql_column)
+                columns=list(cursor.fetchall())  
+                #print(records)
+                #print(columns)
+        
+        else:
+            jsonuser.append({"message" : "Error searching"})
+        
+        #print("Here we are!")
+        cols =[i[0] for i in columns]   
+        for record in records:
+            _list={}
+            for col,val in zip(cols,record):
+                _list[col]=val    
+            _listings.append(_list)   
+        jsonuser.append({'Listings':_listings})
+
+    return jsonify(jsonuser)
+
+###################################################################################################
+###################### T E S T I N G  -   M A I N     M E T H O D   A P P   R U N #################
+###################################################################################################
        		
 if __name__ == "__main__":
     app.run()
 
-
 ###################################################################################################
 ###################### T E S T I N G  - A L R E A D Y    C A L L E D   A B O V E ##################
 ###################################################################################################
-
-
